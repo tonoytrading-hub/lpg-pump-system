@@ -27,7 +27,7 @@ if choice == "Daily Entry":
 
     # MAINTENANCE / TEST BOX
     st.subheader("🛠️ Maintenance & Testing")
-    test_l = st.number_input("Litre used for Testing (Deducted from sales)", min_value=0.0)
+    test_l = st.number_input("Litre used for Testing", min_value=0.0)
     
     # CALCULATED SALES
     actual_sales_l = max(0.0, total_meter_l - test_l)
@@ -46,18 +46,15 @@ if choice == "Daily Entry":
     st.metric("Total Cash Sales", f"{total_cash_sales:,.2f} BDT")
     st.metric("Final Cash in Hand", f"{cash_in_hand:,.2f} BDT")
 
-    # STOCK
-    st.header("🛢️ Tank Stock")
-    st_op = st.number_input("Opening Stock (L)", min_value=0.0)
-    st_pur = st.number_input("Purchases (L)", min_value=0.0)
-    st_cl = (st_op + st_pur) - total_meter_l
-    st.write(f"Calculated Closing Stock: **{st_cl:,.2f} L**")
-
-    # COMMENTS BOX
     st.header("📝 Notes")
     user_comments = st.text_area("Add comments (Optional)")
+
     if st.button(f"🚀 Submit {pump_name} Report", use_container_width=True):
         try:
+            # 1. READ existing data
+            df = conn.read(worksheet="LPG_Logs", ttl=0)
+            
+            # 2. CREATE the new row
             new_row = pd.DataFrame([{
                 "Date": datetime.now().strftime("%Y-%m-%d"),
                 "Month": datetime.now().strftime("%Y-%m"),
@@ -69,14 +66,24 @@ if choice == "Daily Entry":
                 "Expenses": expenses,
                 "Bank_Deposit": bank_dep,
                 "Cash_Hand": cash_in_hand,
-                "Closing_Stock": st_cl,
                 "Comments": user_comments
             }])
             
-            # This is the safer direct-write method
-            conn.create(worksheet="LPG_Logs", data=new_row)
-            st.success("✅ Synced! Data saved to Google Sheets.")
+            # 3. COMBINE and UPDATE
+            updated_df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(worksheet="LPG_Logs", data=updated_df)
+            
+            st.success("✅ Success! Data synced to Google Sheets.")
             st.balloons()
         except Exception as e:
-            st.error(f"Error saving: {e}")
-            st.info("Check if your Sheet tab is named 'LPG_Logs' and Shared as 'Editor'.")
+            st.error(f"Error: {e}")
+
+elif choice == "Monthly Reports":
+    st.header(f"📊 {pump_name} Monthly Summary")
+    df = conn.read(worksheet="LPG_Logs", ttl=0)
+    if not df.empty:
+        df['Date'] = pd.to_datetime(df['Date'])
+        m_df = df[(df['Station'] == pump_name) & (df['Month'] == datetime.now().strftime("%Y-%m"))]
+        st.metric("Mtd Sales (L)", f"{m_df['Sales_L'].sum():,.2f}")
+        st.metric("Mtd Revenue", f"{m_df['Total_Sales'].sum():,.2f} BDT")
+        st.dataframe(m_df)
