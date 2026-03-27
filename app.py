@@ -56,36 +56,27 @@ if choice == "Daily Entry":
     # COMMENTS BOX
     st.header("📝 Notes")
     user_comments = st.text_area("Add comments (Optional)")
-
     if st.button(f"🚀 Submit {pump_name} Report", use_container_width=True):
-        new_row = pd.DataFrame([{
-            "Date": datetime.now().strftime("%Y-%m-%d"),
-            "Month": datetime.now().strftime("%Y-%m"),
-            "Station": pump_name,
-            "Total_L": total_meter_l,
-            "Sales_L": actual_sales_l,
-            "Test_L": test_l,
-            "Total_Sales": total_cash_sales,
-            "Expenses": expenses,
-            "Bank_Deposit": bank_dep,
-            "Cash_Hand": cash_in_hand,
-            "Closing_Stock": st_cl,
-            "Comments": user_comments
-        }])
-        
-        # Pull existing, add new row, push back
-        df = conn.read(worksheet="LPG_Logs")
-        updated_df = pd.concat([df, new_row], ignore_index=True)
-        conn.update(worksheet="LPG_Logs", data=updated_df)
-        st.success("Synced! Data saved to Google Sheets.")
-        st.balloons()
-
-elif choice == "Monthly Reports":
-    st.header(f"📊 {pump_name} Monthly Summary")
-    df = conn.read(worksheet="LPG_Logs")
-    if not df.empty:
-        df['Date'] = pd.to_datetime(df['Date'])
-        m_df = df[(df['Station'] == pump_name) & (df['Month'] == datetime.now().strftime("%Y-%m"))]
-        st.metric("Mtd Sales (L)", f"{m_df['Sales_L'].sum():,.2f}")
-        st.metric("Mtd Revenue", f"{m_df['Total_Sales'].sum():,.2f} BDT")
-        st.dataframe(m_df)
+        try:
+            new_row = pd.DataFrame([{
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "Month": datetime.now().strftime("%Y-%m"),
+                "Station": pump_name,
+                "Total_L": total_meter_l,
+                "Sales_L": actual_sales_l,
+                "Test_L": test_l,
+                "Total_Sales": total_cash_sales,
+                "Expenses": expenses,
+                "Bank_Deposit": bank_dep,
+                "Cash_Hand": cash_in_hand,
+                "Closing_Stock": st_cl,
+                "Comments": user_comments
+            }])
+            
+            # This is the safer direct-write method
+            conn.create(worksheet="LPG_Logs", data=new_row)
+            st.success("✅ Synced! Data saved to Google Sheets.")
+            st.balloons()
+        except Exception as e:
+            st.error(f"Error saving: {e}")
+            st.info("Check if your Sheet tab is named 'LPG_Logs' and Shared as 'Editor'.")
