@@ -3,91 +3,89 @@ import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
-# --- MOBILE SETUP ---
 st.set_page_config(page_title="Tonoy & Farida LPG", layout="centered")
-
-# --- DATABASE CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- STATION SELECTOR ---
 st.title("⛽ LPG 24h Daily Report")
 pump_name = st.selectbox("Select Station", ["Tonoy LPG", "Farida LPG"])
-
-st.write(f"**Date:** {datetime.now().strftime('%d %b, %Y')}")
 
 menu = ["Daily Entry", "Monthly Reports"]
 choice = st.sidebar.radio("Navigation", menu)
 
-# --- 1. DAILY ENTRY ---
 if choice == "Daily Entry":
     st.header(f"Data Entry: {pump_name}")
-    rate = st.number_input("Selling Rate (BDT/L)", min_value=0.0, step=0.1, format="%.2f")
+    rate = st.number_input("Selling Rate (BDT/L)", min_value=0.0, step=0.1)
 
-    # Nozzle Readings
     st.subheader("🔢 Nozzle Meters")
-    total_l_sold = 0.0
+    total_meter_l = 0.0
     for n in range(1, 5):
         with st.expander(f"Nozzle {n}", expanded=(n==1)):
             c1, c2 = st.columns(2)
             op = c1.number_input(f"Opening N{n}", min_value=0.0, key=f"op{n}")
             cl = c2.number_input(f"Closing N{n}", min_value=0.0, key=f"cl{n}")
-            total_l_sold += max(0, cl - op)
+            total_meter_l += max(0.0, cl - op)
 
-    # Cash Management
+    # MAINTENANCE / TEST BOX
+    st.subheader("🛠️ Maintenance & Testing")
+    test_l = st.number_input("Litre used for Testing (Deducted from sales)", min_value=0.0)
+    
+    # CALCULATED SALES
+    actual_sales_l = max(0.0, total_meter_l - test_l)
+    total_cash_sales = actual_sales_l * rate
+    
+    col1, col2 = st.columns(2)
+    col1.metric("Meter Total (L)", f"{total_meter_l:,.2f}")
+    col2.metric("Actual Sales (L)", f"{actual_sales_l:,.2f}")
+
     st.header("💰 Cash & Expenses")
-    total_cash_sales = total_l_sold * rate
     cash_cf = st.number_input("Cash C/F (Yesterday)", min_value=0.0)
     expenses = st.number_input("Today's Expenses", min_value=0.0)
     bank_dep = st.number_input("Bank Deposit", min_value=0.0)
     
     cash_in_hand = (cash_cf + total_cash_sales) - (expenses + bank_dep)
-    st.metric("Total Sales", f"{total_cash_sales:,.2f} BDT")
-    st.metric("Cash in Hand", f"{cash_in_hand:,.2f} BDT")
+    st.metric("Total Cash Sales", f"{total_cash_sales:,.2f} BDT")
+    st.metric("Final Cash in Hand", f"{cash_in_hand:,.2f} BDT")
 
-    # Stock (Simplified)
+    # STOCK
     st.header("🛢️ Tank Stock")
     st_op = st.number_input("Opening Stock (L)", min_value=0.0)
     st_pur = st.number_input("Purchases (L)", min_value=0.0)
-    st_cl = (st_op + st_pur) - total_l_sold
-    st.metric("Calculated Closing Stock", f"{st_cl:,.2f} L")
+    st_cl = (st_op + st_pur) - total_meter_l
+    st.write(f"Calculated Closing Stock: **{st_cl:,.2f} L**")
+
+    # COMMENTS BOX
+    st.header("📝 Notes")
+    user_comments = st.text_area("Add comments (Optional)")
 
     if st.button(f"🚀 Submit {pump_name} Report", use_container_width=True):
-        new_data = pd.DataFrame([{
+        new_row = pd.DataFrame([{
             "Date": datetime.now().strftime("%Y-%m-%d"),
             "Month": datetime.now().strftime("%Y-%m"),
             "Station": pump_name,
-            "Total_L": total_l_sold,
+            "Total_L": total_meter_l,
+            "Sales_L": actual_sales_l,
+            "Test_L": test_l,
             "Total_Sales": total_cash_sales,
             "Expenses": expenses,
             "Bank_Deposit": bank_dep,
             "Cash_Hand": cash_in_hand,
-            "Closing_Stock": st_cl
+            "Closing_Stock": st_cl,
+            "Comments": user_comments
         }])
-        existing = conn.read(worksheet="LPG_Logs")
-        updated = pd.concat([existing, new_data], ignore_index=True)
-        conn.update(worksheet="LPG_Logs", data=updated)
-        st.success("Synced to Cloud!")
+        
+        # Pull existing, add new row, push back
+        df = conn.read(worksheet="LPG_Logs")
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        conn.update(worksheet="LPG_Logs", data=updated_df)
+        st.success("Synced! Data saved to Google Sheets.")
+        st.balloons()
 
-# --- 2. MONTHLY REPORTS ---
 elif choice == "Monthly Reports":
     st.header(f"📊 {pump_name} Monthly Summary")
     df = conn.read(worksheet="LPG_Logs")
-    
     if not df.empty:
         df['Date'] = pd.to_datetime(df['Date'])
-        # Filter by selected pump
-        df = df[df['Station'] == pump_name]
-        
-        current_month = datetime.now().strftime("%Y-%m")
-        m_df = df[df['Month'] == current_month]
-        
-        col1, col2 = st.columns(2)
-        col1.metric("Mtd Sales (BDT)", f"{m_df['Total_Sales'].sum():,.2f}")
-        col2.metric("Mtd Bank Deposits", f"{m_df['Bank_Deposit'].sum():,.2f}")
-        
-        st.metric("Mtd Total Expenses", f"{m_df['Expenses'].sum():,.2f}")
-        
-        st.subheader("Daily History (This Month)")
-        st.dataframe(m_df[['Date', 'Total_L', 'Total_Sales', 'Expenses', 'Bank_Deposit']], use_container_width=True)
-    else:
-        st.info("No data found in Google Sheets.")
+        m_df = df[(df['Station'] == pump_name) & (df['Month'] == datetime.now().strftime("%Y-%m"))]
+        st.metric("Mtd Sales (L)", f"{m_df['Sales_L'].sum():,.2f}")
+        st.metric("Mtd Revenue", f"{m_df['Total_Sales'].sum():,.2f} BDT")
+        st.dataframe(m_df)
