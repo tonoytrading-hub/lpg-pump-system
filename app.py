@@ -1,71 +1,59 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
 
-st.set_page_config(page_title="Tonoy & Farida LPG", layout="wide")
-conn = st.connection("gsheets", type=GSheetsConnection)
+st.set_page_config(page_title="LPG Smart Ledger", layout="centered")
 
-# --- AUTO-CALCULATION LOGIC ---
-try:
-    df = conn.read(worksheet="LPG_Logs", ttl=0)
-    # Get last closing values for the selected pump
-    pump = st.sidebar.selectbox("Station", ["Tonoy LPG", "Farida LPG"])
-    last_row = df[df['Station'] == pump].iloc[-1]
-    prev_stock = float(last_row['Closing_Stock'])
-    prev_cash = float(last_row['Cash_Hand'])
-except:
-    prev_stock, prev_cash, pump = 0.0, 0.0, "Tonoy LPG"
+# --- 1. SETUP & CALCULATIONS ---
+st.title("⛽ LPG Daily Report")
+pump = st.selectbox("Select Station", ["Tonoy LPG", "Farida LPG"])
 
-st.title(f"⛽ {pump} Daily Report")
-st.sidebar.info(f"Yesterday's Closing:\nStock: {prev_stock}L\nCash: {prev_cash} BDT")
+st.subheader("🔢 Meter Readings")
+rate = st.number_input("Today's Rate (BDT/L)", min_value=0.0, step=0.1)
+op = st.number_input("Opening Meter", min_value=0.0)
+cl = st.number_input("Closing Meter", min_value=0.0)
 
-# --- RATE CHANGE & NOZZLES ---
-is_rate_change = st.checkbox("🚨 Rate Change Today?")
-r1 = st.number_input("Rate 1 (Old)", min_value=0.0)
-r2 = st.number_input("Rate 2 (New)", min_value=0.0, disabled=not is_rate_change)
+# Automatic Math
+total_l = max(0.0, cl - op)
+total_cash = total_l * rate
 
-st.subheader("🔢 Nozzle Readings")
-total_l, total_money = 0.0, 0.0
-
-for n in range(1, 5):
-    with st.expander(f"Nozzle {n}"):
-        c1, c2 = st.columns(2)
-        op1 = c1.number_input(f"Opening N{n}", key=f"o{n}")
-        cl1 = c2.number_input(f"Closing N{n}", key=f"c{n}")
-        diff = max(0.0, cl1 - op1)
-        total_l += diff
-        total_money += (diff * r1 if not is_rate_change else diff * r2) # Simplifies math for you
-
-# --- FINAL AUTO-MATH ---
 st.divider()
-test_l = st.number_input("Test/Maintenance (Litre)", min_value=0.0)
-st_pur = st.number_input("New Stock Purchase (Litre)", min_value=0.0)
-exp = st.number_input("Today's Expenses", min_value=0.0)
-dep = st.number_input("Bank Deposit", min_value=0.0)
+st.metric("Total Litres Sold", f"{total_l:,.2f} L")
+st.metric("Total Sales Value", f"{total_cash:,.2f} BDT")
 
-# The app does this math so you don't have to
-actual_sales = total_l - test_l
-final_stock = (prev_stock + st_pur) - total_l
-final_cash = (prev_cash + total_money) - (exp + dep)
+# --- 2. EXPENSES & STOCK ---
+st.subheader("💰 Cash & Stock")
+col1, col2 = st.columns(2)
+exp = col1.number_input("Expenses", min_value=0.0)
+dep = col2.number_input("Bank Deposit", min_value=0.0)
 
-st.sidebar.metric("Calculated Sales", f"{actual_sales} L")
-st.sidebar.metric("Closing Cash", f"{final_cash} BDT")
+st_op = st.number_input("Opening Stock (L)", min_value=0.0)
+st_pur = st.number_input("New Purchase (L)", min_value=0.0)
+final_stock = (st_op + st_pur) - total_l
 
-if st.button("🚀 SUBMIT & SYNC DATA"):
-    new_data = pd.DataFrame([{
+st.info(f"Tonight's Closing Stock: {final_stock:,.2f} L")
+
+# --- 3. THE "SAFE" SUBMIT ---
+if st.button("🚀 Generate Final Report", use_container_width=True):
+    report_data = {
         "Date": datetime.now().strftime("%Y-%m-%d"),
         "Station": pump,
         "Total_L": total_l,
-        "Sales_L": actual_sales,
-        "Total_Sales_Value": total_money,
+        "Sales_Value": total_cash,
         "Expenses": exp,
         "Bank_Deposit": dep,
-        "Cash_Hand": final_cash,
-        "Closing_Stock": final_stock,
-        "Rate": r1 if not is_rate_change else r2
-    }])
-    updated = pd.concat([df, new_data], ignore_index=True)
-    conn.update(worksheet="LPG_Logs", data=updated)
-    st.success("Success! Carry-forward updated for tomorrow.")
-    st.balloons()
+        "Closing_Stock": final_stock
+    }
+    
+    st.success("✅ Report Generated!")
+    st.table(pd.DataFrame([report_data]))
+    
+    # Since the Google Connection is giving us trouble, 
+    # Use this button to save the data to your phone instantly.
+    csv = pd.DataFrame([report_data]).to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download & Save to Phone",
+        data=csv,
+        file_name=f"LPG_{pump}_{datetime.now().strftime('%d_%m')}.csv",
+        mime='text/csv',
+    )
